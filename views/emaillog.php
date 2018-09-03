@@ -60,11 +60,11 @@
                           <td><?php echo $data->email_number; ?></td>
                           <td><?php echo $data->sender_email; ?></td>
                           <td><?php echo $data->receiver_email; ?></td>
-                          <td><?php echo $data->carboncopy_email; ?></td>
+                          <td><?php echo str_replace(',','<br>',$data->carboncopy_email); ?></td>
                           <td><?php echo $data->subject; ?></td>
                           <td><?php echo $data->distributor; ?></td>
                           <td><?php echo $data->received_date; ?></td>
-                          <td><?php echo $data->attachments; ?></td>
+                          <td><?php echo str_replace(',','<br>',$data->attachments); ?></td>
                           <td><?php echo $data->status; ?></td>                                     
                           
                           <td>

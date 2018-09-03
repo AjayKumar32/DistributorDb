@@ -32,6 +32,7 @@ class email extends CI_Controller {
 
 	public function	email_sync(){
  		$this->emails->SyncEmails();
+ 		redirect('email/email_log'); 
 		$data["results"] = $this->emails->fetch_data();
 
 		$this->load->view('header');

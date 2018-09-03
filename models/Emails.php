@@ -45,23 +45,17 @@ class Emails extends CI_Model{
 
     public function SyncEmails(){
             $this->conn = imap_open($this->server, $this->user, $this->pass) or die('Error : '.imap_last_error());
+            $this->read_inbox();
+            return true;
     }
 
     // read the inbox
-    function read_inbox() {
-        $mailboxes = imap_list($this->conn, $this->server, '*');
-        $count = 1;
-        foreach($mailboxes as $mailboxe){
-            if($count==1){
-                $count++;
-                continue;
-            }
+    public function read_inbox() {        
             
-            imap_reopen($this->conn, $mailboxe)  or die('Error : '.imap_last_error());
             $this->msg_cnt = imap_num_msg($this->conn);
             
             //$emails = imap_search ( $this->conn, "unseen" );
-            $date = date('d M Y', strtotime(date('Y-m-d').' -3 day'));
+            $date = date('d M Y', strtotime(date('Y-m-d').' -15 day'));
             //print_r($date);die;
             $emails = imap_search ( $this->conn, "SINCE \"$date\"");
             //echo "<pre>";print_r($emails);die;
@@ -73,15 +67,24 @@ class Emails extends CI_Model{
             //echo "<pre>";print_r($emailcount);    
              for($j=0;$j<$emailcount;$j++){ 
                 $email = $emails[$j];
-               if($this->checkProcessedEmail($email)){
+               if($this->checkLoggedEmail($email)){
                 continue;
                }
                $headerinfo = imap_headerinfo($this->conn, $email);
-               //echo "<pre>";print_r($email);
+               
                $fromemail = $headerinfo->from[0]->mailbox.'@'.$headerinfo->from[0]->host;
-               //echo "<pre>";print_r($fromemail);die;
+               $cc_addres = array();
+               if(isset($headerinfo->cc) && !empty($headerinfo->cc)){
+                 foreach($headerinfo->cc as $ccaddress){
+                    $cc_addres[] = $ccaddress->mailbox.'@'.$ccaddress->host;
+                   } 
 
-               $this->getDistributorDetailByEmail($fromemail);
+               }
+               $subject = $headerinfo->subject;
+               $emailDate = $headerinfo->date;
+               
+
+               //$this->getDistributorDetailByEmail($fromemail);
               
               //Structure of the email from IMAP
                 $structure = imap_fetchstructure($this->conn, $email);
@@ -90,42 +93,44 @@ class Emails extends CI_Model{
                 
                 /* if any attachments found... */
                 $attachments = array();
-            if(isset($structure->parts) && count($structure->parts)) 
-            {
-                for($i = 0; $i < count($structure->parts); $i++) 
+                if(isset($structure->parts) && count($structure->parts)) 
                 {
-                     
-                    if($structure->parts[$i]->ifdparameters) 
+                    for($i = 0; $i < count($structure->parts); $i++) 
                     {
-                        foreach($structure->parts[$i]->dparameters as $object) 
+                         
+                        if($structure->parts[$i]->ifdparameters) 
                         {
-                            if(strtolower($object->attribute) == 'filename') 
+                            foreach($structure->parts[$i]->dparameters as $object) 
                             {
-                                $attachments[$i]['is_attachment'] = true;
-                                $attachments[$i]['filename'] = $object->value; // Get name of the file from email
+                                if(strtolower($object->attribute) == 'filename') 
+                                {
+                                    $attachments[$i]['is_attachment'] = true;
+                                    $attachments[$i]['filename'] = $object->value; // Get name of the file from email
+                                }
+                            }
+                        }
+                        
+                        // Check if the attachment is availabe in email and get the contents of the attachment
+                        if(isset($attachments[$i]['is_attachment']) && $attachments[$i]['is_attachment']) 
+                        {
+                            $attachments[$i]['attachment'] = imap_fetchbody($this->conn, $email, $i+1);
+         
+                            /* 3 = BASE64 encoding */
+                            if($structure->parts[$i]->encoding == 3) 
+                            { 
+                                $attachments[$i]['attachment'] = base64_decode($attachments[$i]['attachment']);
+                            }
+                            /* 4 = QUOTED-PRINTABLE encoding */
+                            elseif($structure->parts[$i]->encoding == 4) 
+                            { 
+                                $attachments[$i]['attachment'] = quoted_printable_decode($attachments[$i]['attachment']);
                             }
                         }
                     }
-                    
-                    // Check if the attachment is availabe in email and get the contents of the attachment
-                    if(isset($attachments[$i]['is_attachment']) && $attachments[$i]['is_attachment']) 
-                    {
-                        $attachments[$i]['attachment'] = imap_fetchbody($this->conn, $email, $i+1);
-     
-                        /* 3 = BASE64 encoding */
-                        if($structure->parts[$i]->encoding == 3) 
-                        { 
-                            $attachments[$i]['attachment'] = base64_decode($attachments[$i]['attachment']);
-                        }
-                        /* 4 = QUOTED-PRINTABLE encoding */
-                        elseif($structure->parts[$i]->encoding == 4) 
-                        { 
-                            $attachments[$i]['attachment'] = quoted_printable_decode($attachments[$i]['attachment']);
-                        }
-                    }
                 }
-            }
+           
                 //Save THe attachment
+                $filequeue = array();
                 foreach($attachments as $attachment)
                 {
                     if($attachment['is_attachment'] == 1)
@@ -133,36 +138,81 @@ class Emails extends CI_Model{
                         
                         //Checking file type(Systsem type)
                         $filename = $attachment['filename'];
-                        $folder = 'debits';
+                        $folder = APPPATH.'uploads/debits';
+                        $file_view = 'debits/'. $filename;
                         if(strpos(strtolower($filename),'pos')!==false){
-                            $folder = 'pos';
+                            $folder = APPPATH.'uploads/pos';
+                            $file_view = 'pos/'. $filename;
                         }
                         elseif(strpos(strtolower($filename),'debit')!==false){
-                            $folder = 'debits';
+                            $folder = APPPATH.'uploads/debits';
+                            $file_view = 'debits/'. $filename;
                         }
                         elseif(strpos(strtolower($filename),'inventory')!==false || strpos(strtolower($filename),'inv')!==false){
-                            $folder = 'inventory';
+                            $folder = APPPATH.'uploads/inventory';
+                            $file_view = 'inventory/'. $filename;
                         }
                         /* prefix the email number to the filename in case two emails
                          * have the attachment with the same file name.
                          */
+                        
                         $fp = fopen($folder.'/'. $filename, "w+");
                         fwrite($fp, $attachment['attachment']);
                         fclose($fp);
+
+                         //echo "<pre>";print_r($folder);die;
                         //Send the file to process and import them into their corresponding Table
-                        $this->processImports($folder,$email,$fromemail);
+                        //$this->processImports($folder,$email,$fromemail);
 
-                        $attachmentfile_name[] = $filename;
-                        $filequeue[] = $folder.'/'.$email . "-" . $filename;
-                    }
+                        
+                        $filequeue[] = $file_view;
+                    }                    
          
-                }           
-
+                }
+                $insert =array(
+                                'email_number'=>$email,
+                                'sender_email'=>$fromemail,
+                                'receiver_email'=>'shipdebit@adestotech.com',
+                                'carboncopy_email'=>implode(',',$cc_addres),
+                                'subject'=>$subject,
+                                'distributor'=>$this->getDistributorByEmail($fromemail),
+                                'received_date'=>date('Y-m-d H:i:s',strtotime($emailDate)),
+                                'attachments'=>implode(',',$filequeue)
+                                );
+                $this->db->insert('email_log',$insert);
+                //echo "<pre>";print_r($insert);die;
             }
-        }
+     
     }   
-    echo "email Scan Completed!";
-        //$this->inbox = $in;
+   
+ }
+
+
+    public function checkLoggedEmail($email_number){
+        $this->db->select('COUNT(1) AS CNT')
+                         ->from('email_log')
+                         ->where('email_number',$email_number);
+        $query = $this->db->get();
+        $result = $query->row_array();
+        if($result['CNT']>0){
+            return true;
+        }else{
+            return false;
+        }
+                         
+    }
+
+    public function getDistributorByEmail($email){
+        $this->db->select('*')
+                         ->from('distributor_new')
+                         ->where('distributor_email',$email);
+        $query = $this->db->get();
+        $result = $query->row_array();
+        if(!empty($result)){
+            return $result['id'];
+        }else{
+            return 0;
+        }
     }
         
     
